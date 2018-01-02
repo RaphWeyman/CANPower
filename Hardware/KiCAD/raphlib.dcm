@@ -1,0 +1,16 @@
+EESchema-DOCLIB  Version 2.0
+#
+$CMP MCP16311
+D Step down regulator
+$ENDCMP
+#
+$CMP MCP1727
+D Linear regulator - fixed
+$ENDCMP
+#
+$CMP PIC24HJ128GP504
+K Flash-Based 16-Bit Microcontroller
+F http://ww1.microchip.com/downloads/en/DeviceDoc/70293G.pdf
+$ENDCMP
+#
+#End Doc Library
