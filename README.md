@@ -30,7 +30,7 @@ Here's what the default application does:-
  * Channel 0 mode and modulation level are stored in EEPROM at power off time (immmediately prior to transition to the
  * alarm simulation state)).
  * 
- * An alarm simulation is included after the ignition is turned off (and the POWER_OFF_DELAY has elapsed.
+ * An alarm simulation is included after the ignition is turned off (and the POWER_OFF_DELAY has elapsed).
  * During alarm simulation the switch chip is turned off but the LED indicates as if there were an
  * alarm module armed.
  * Alarm simulation continues for the ALARM_SIMULATION_TIME or can be disabled by setting the ALARM_SIMULATION_TIME to zero.
@@ -46,6 +46,7 @@ Here's what the default application does:-
  * power.
  * 
  * Indications are assumed to be for a single bi-colour LED.
+ * LED is dimmed according to the ambient light sensor CAN bus message.
  * LED0 fully on indicates channel 0 is in unmodulated mode.
  * LED1 on but with between 1 and 4 inverse blips indicates channel 0 modulated mode and the number of inverse blips indicate
  * the modulation level (4 blips - fully on).
