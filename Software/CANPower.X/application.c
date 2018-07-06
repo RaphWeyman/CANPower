@@ -23,7 +23,7 @@
  * Channel 0 mode and modulation level are stored in EEPROM at power off time (immmediately prior to transition to the
  * alarm simulation state)).
  * 
- * An alarm simulation is included after the ignition is turned off (and the POWER_OFF_DELAY has elapsed.
+ * An alarm simulation is included after the ignition is turned off (and the POWER_OFF_DELAY has elapsed).
  * During alarm simulation the switch chip is turned off but the LED indicates as if there were an
  * alarm module armed.
  * Alarm simulation continues for the ALARM_SIMULATION_TIME or can be disabled by setting the ALARM_SIMULATION_TIME to zero.
@@ -32,7 +32,9 @@
  * 
  * Ignition on is determined by CAN messages being received.
  * Fully on state is maintained POWER_OFF_DELAY. If no CAN messages are received for longer than the POWER_OFF_DELAY
- * then channels 0 and 1 are both turned off and the alarm simulation is stated.
+ * then channels 0 and 1 are both turned off and the alarm simulation is started.
+ * (If the channel 0 output is off - i.e. MODULATED_OFF then the alarm simulation pattern is output to the LED
+ * immediately the ignition is determined to be off.
  * Power to the CPU is latched using the PORT_POWER hardware control. When either the ignition is on or the PORT_POWER is set to
  * POWER_PORT_ON power is supplied to the CPU. This allows the CPU to maintain power during the POWER_OFF_DELAY
  * and the ALARM_SIMLATION_TIME. At the end of the ALARM_SIMULATION_TIME, the PORT_POWER is set to POWER_PORT_OFF so as to cut
@@ -79,7 +81,7 @@
 // Set to zero for no alarm simulation indication - goes straight to power removal
 // Alarm simulation draws about 8mA and so would fully flatten a battery within a month
 // or two.
-#define ALARM_SIMULATION_TIME (12*60) // 12 hours
+#define ALARM_SIMULATION_TIME (24*60) // 24 hours
 
 // If defined then the kickstand warning indication will be issued with the ignition is on and the
 // kickstand is deployed.
@@ -145,10 +147,11 @@ static const indication_t CHANNEL_0_INDICATIONS[NUMBER_OF_POWER_MODES][NUMBER_OF
 
 // the function corresponding to the control button and the parameters for interpreting it
 #define BUTTON_PRESSED CANASCSwitch()
-#define SHORT_PRESS_MINIMUM (50/TIMER_PERIOD)
+#define SHORT_PRESS_MINIMUM (150/TIMER_PERIOD)
 #define SHORT_PRESS_MAXIMUM (1000/TIMER_PERIOD)
 #define VERY_LONG_PRESS (20000/TIMER_PERIOD)
-#define BUTTON_DEBOUNCE (50/TIMER_PERIOD) // In order to register the button must be off for at least this long prior to the press
+#define BUTTON_DEBOUNCE (150/TIMER_PERIOD) // In order to register the button must be off for at least this long prior to the press
+
 
 
 // the state machine's states
@@ -249,15 +252,14 @@ void PowerOnState(const state_action_t action)
             last_CAN_time = now;
             break;
         case MAINTAIN_STATE:
-            LEDsDim(CANAmbient()); // LED brightness to follow ambient sensor when powered on
-
             if (CanEcuReceived()) 
             {
                 last_CAN_time = now;
             }
             time_since_last_CAN = now - last_CAN_time; // how long ago the last CAN message was received
+            
             // Power off if either the POWER_OFF_DELAY has elapsed or
-            // in case of a switch chip fault immediately the ignition is determined to be off
+            // in case of a switch chip fault immediately the ignition is determined to be off         
             if ((time_since_last_CAN > POWER_OFF_DELAY)
                 || (SwitchChipFault() && (time_since_last_CAN > IGNITION_OFF_DELAY)))
             {
@@ -271,47 +273,64 @@ void PowerOnState(const state_action_t action)
             else if (SwitchChipFault())
             {
                 Indicate(FAULT_INDICATION);
+                LEDsDim(false);
             }
+            // early alarm simulation indication if ignition is off and the LED would be off (i.e. if it
+            // would be showing the modulated OFF state)
+#if (ALARM_SIMULATION_TIME > 0)
+            else if ((time_since_last_CAN > IGNITION_OFF_DELAY)
+                && (channel_0_mode == MODE_MODULATED)
+                && (channel_0_modulated_power_level == MODULATED_OFF))
+            {
+                Indicate(ALARM_INDICATION);
+                LEDsDim(false); // alarm indication should always be bright
+            }
+#endif
             else
             {
 #ifdef KICKSTAND_WARNING
-                if (CANKickstand() && (time_since_last_CAN < IGNITION_OFF_DELAY))
+                if (CANKickstand() && (time_since_last_CAN <= IGNITION_OFF_DELAY))
                 {
                     Indicate(KICKSTAND_INDICATION);
+                    LEDsDim(false);
                     button_pressed_counter = 0;
                 }
                 else
 #endif
-                if (BUTTON_PRESSED)
                 {
-                    if(button_pressed_counter < UINT16_MAX) ++button_pressed_counter;
-                    if ((button_pressed_counter == VERY_LONG_PRESS) && (button_debounce_counter >= BUTTON_DEBOUNCE))
+                    LEDsDim(CANAmbient()); // LED brightness to follow ambient sensor when powered on
+
+                    if (BUTTON_PRESSED)
                     {
-                        //long button press change the channel power mode
-                        if (++channel_0_mode >= NUMBER_OF_POWER_MODES) channel_0_mode = 0;
-                        Indicate(MODE_CHANGE_INDICATION);
-                        SetPWMLevel0(CHANNEL_0_PWM_SETTING[channel_0_mode][channel_0_modulated_power_level],CHANNEL_0_PWM_MODE[channel_0_mode][channel_0_modulated_power_level]);     
-                    }
-                }
-                else
-                {
-                    if ((channel_0_mode == MODE_MODULATED) && (button_pressed_counter >= SHORT_PRESS_MINIMUM)
-                      && (button_pressed_counter <= SHORT_PRESS_MAXIMUM) && (button_debounce_counter >= BUTTON_DEBOUNCE))
-                    {
-                       //short button press change modulated power level
-                        if (++channel_0_modulated_power_level >= NUMBER_OF_MODULATED_POWER_LEVELS) channel_0_modulated_power_level = 0;
-                        SetPWMLevel0(CHANNEL_0_PWM_SETTING[channel_0_mode][channel_0_modulated_power_level],CHANNEL_0_PWM_MODE[channel_0_mode][channel_0_modulated_power_level]);     
-                    }
-                    if (button_pressed_counter > 0)
-                    {
-                        button_pressed_counter = 0;
-                        button_debounce_counter = 0;
+                        if(button_pressed_counter < UINT16_MAX) ++button_pressed_counter;
+                        if ((button_pressed_counter == VERY_LONG_PRESS) && (button_debounce_counter >= BUTTON_DEBOUNCE))
+                        {
+                            //long button press change the channel power mode
+                            if (++channel_0_mode >= NUMBER_OF_POWER_MODES) channel_0_mode = 0;
+                            Indicate(MODE_CHANGE_INDICATION);
+                            SetPWMLevel0(CHANNEL_0_PWM_SETTING[channel_0_mode][channel_0_modulated_power_level],CHANNEL_0_PWM_MODE[channel_0_mode][channel_0_modulated_power_level]);     
+                        }
                     }
                     else
                     {
-                        if(button_debounce_counter < UINT16_MAX) ++button_debounce_counter;
+                        if ((channel_0_mode == MODE_MODULATED) && (button_pressed_counter >= SHORT_PRESS_MINIMUM)
+                          && (button_pressed_counter <= SHORT_PRESS_MAXIMUM) && (button_debounce_counter >= BUTTON_DEBOUNCE))
+                        {
+                            //short button press change modulated power level
+                            if (++channel_0_modulated_power_level >= NUMBER_OF_MODULATED_POWER_LEVELS) channel_0_modulated_power_level = 0;
+                            SetPWMLevel0(CHANNEL_0_PWM_SETTING[channel_0_mode][channel_0_modulated_power_level],CHANNEL_0_PWM_MODE[channel_0_mode][channel_0_modulated_power_level]);     
+                        }
+                        if (button_pressed_counter > 0)
+                        {
+                            button_pressed_counter = 0;
+                            button_debounce_counter = 0;
+                        }
+                        else
+                        {
+                            if(button_debounce_counter < UINT16_MAX) ++button_debounce_counter;
+                        }
+                        Indicate(CHANNEL_0_INDICATIONS[channel_0_mode][channel_0_modulated_power_level]);
                     }
-                    Indicate(CHANNEL_0_INDICATIONS[channel_0_mode][channel_0_modulated_power_level]);
                 }
             }            
             break;
